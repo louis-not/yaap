@@ -18,7 +18,13 @@ def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
         description="YAAP - Yet Another AI Program",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  yaap                    Start interactive chat session
+  yaap Hello AI           Ask a direct question
+  yaap "How are you?"     Ask a question with spaces
+        """
     )
     
     parser.add_argument(
@@ -33,18 +39,44 @@ def parse_args():
         help="Enable debug mode"
     )
     
+    parser.add_argument(
+        "query",
+        nargs="*",
+        help="Direct query to ask the AI (if not provided, starts interactive mode)"
+    )
+    
     return parser.parse_args()
+
+
+def handle_direct_query(query: str, debug: bool = False):
+    """Handle a direct query and return response"""
+    session = ChatSession(debug=debug)
+    response = session.get_dummy_response(query)
+    print(session.formatter.format_response(response))
 
 
 def main():
     """Main entry point"""
     args = parse_args()
     
-    # Initialize chat session
+    # Check if we have a direct query
+    if args.query:
+        # Join all query arguments into a single string
+        query = " ".join(args.query)
+        try:
+            handle_direct_query(query, args.debug)
+        except Exception as e:
+            if args.debug:
+                raise
+            print(f"Error: {e}")
+            sys.exit(1)
+        return
+    
+    # Interactive mode
     session = ChatSession(debug=args.debug)
     
     # Welcome message
-    print("> YAAP - Yet Another AI Program")
+    print("YAAP - Yet Another AI Program")
     print("Type 'exit' or 'quit' to end the session")
     print("Type 'help' for available commands")
     print("-" * 50)
@@ -53,7 +85,7 @@ def main():
         # Start interactive session
         session.start()
     except KeyboardInterrupt:
-        print("\n\nGoodbye! =K")
+        print("\n\nGoodbye! 👋")
         sys.exit(0)
     except Exception as e:
         if args.debug:
