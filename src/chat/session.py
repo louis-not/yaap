@@ -4,10 +4,12 @@ Chat session management for YAAP
 
 import time
 import asyncio
+import sys
 from typing import List, Dict, Optional
 from .formatter import MessageFormatter
 from llm import OpenAIClient, Message, MessageRole
 from config import load_llm_config
+from utils import StreamingThinkingHandler
 
 
 class ChatSession:
@@ -66,6 +68,132 @@ class ChatSession:
                 print(f"[DEBUG] LLM request failed: {e}")
             # Fallback to dummy response
             return self._get_dummy_response(user_input)
+    
+    async def stream_ai_response(self, user_input: str) -> str:
+        """Stream AI response and return the complete response"""
+        if not self.use_llm or not self.llm_client:
+            # For dummy responses, simulate streaming
+            dummy_response = self._get_dummy_response(user_input)
+            await self._stream_text(dummy_response)
+            return dummy_response
+        
+        try:
+            # Convert conversation history to Message objects
+            messages = self._prepare_messages_for_llm(user_input)
+            
+            # Stream response using LLM
+            full_response = ""
+            async for chunk in self.llm_client.generate_stream(messages):
+                if chunk:
+                    print(chunk, end='', flush=True)
+                    full_response += chunk
+            
+            return full_response
+            
+        except Exception as e:
+            if self.debug:
+                print(f"[DEBUG] LLM streaming failed: {e}")
+            # Fallback to dummy response with streaming
+            dummy_response = self._get_dummy_response(user_input)
+            await self._stream_text(dummy_response)
+            return dummy_response
+    
+    async def stream_ai_response_formatted(self, user_input: str) -> str:
+        """Stream AI response with proper formatting and thinking animation"""
+        if not self.use_llm or not self.llm_client:
+            # For dummy responses, show formatted output
+            dummy_response = self._get_dummy_response(user_input)
+            formatted_response = self.formatter.format_response(dummy_response)
+            await self._stream_text(formatted_response)
+            return dummy_response
+        
+        # Create thinking handler with same color as formatter
+        thinking_handler = StreamingThinkingHandler(self.formatter.LIGHT_PURPLE)
+        
+        try:
+            # Convert conversation history to Message objects
+            messages = self._prepare_messages_for_llm(user_input)
+            
+            if self.debug:
+                print(f"[DEBUG] Starting LLM stream with postprocessing for: {user_input[:50]}...")
+            
+            # Temporarily disable LLM postprocessing since we'll handle it here
+            original_postprocessing = self.llm_client.enable_postprocessing
+            self.llm_client.enable_postprocessing = False
+            
+            # Create raw stream generator
+            async def raw_stream():
+                async for chunk in self.llm_client.generate_stream(messages):
+                    if chunk:
+                        yield chunk
+            
+            # Import postprocessing helper
+            from utils.helpers import postprocess_response
+            
+            # Start thinking animation since we're collecting response
+            await thinking_handler.handle_thinking_event("enter")
+            
+            # Stream response and collect full response first
+            full_response = ""
+            chunk_count = 0
+            
+            async for raw_chunk in raw_stream():
+                if raw_chunk:
+                    chunk_count += 1
+                    full_response += raw_chunk
+                    
+                    if self.debug and chunk_count <= 5:
+                        print(f"[DEBUG] Raw chunk {chunk_count}: '{raw_chunk[:30]}...'")
+            
+            # Stop thinking animation
+            await thinking_handler.handle_thinking_event("exit")
+            
+            # Process the complete response to remove thinking tokens
+            processed_response = postprocess_response(full_response, remove_thinking=True)
+            
+            if self.debug:
+                print(f"[DEBUG] Original length: {len(full_response)}, Processed length: {len(processed_response)}")
+            
+            # Now stream the processed response character by character for display
+            if processed_response:
+                for char in processed_response:
+                    print(f"{self.formatter.LIGHT_PURPLE}{char}{self.formatter.RESET}", end='', flush=True)
+                    await asyncio.sleep(0.01)  # Small delay for streaming effect
+            
+            full_response = processed_response
+            
+            # Clean up any active thinking animation
+            await thinking_handler.cleanup()
+            
+            # Restore original postprocessing setting
+            self.llm_client.enable_postprocessing = original_postprocessing
+            
+            if self.debug:
+                print(f"[DEBUG] Streaming complete. Total processed chunks: {chunk_count}, Response length: {len(full_response)}")
+            
+            return full_response
+            
+        except Exception as e:
+            # Clean up thinking animation on error
+            await thinking_handler.cleanup()
+            
+            # Restore original postprocessing setting on error
+            if 'original_postprocessing' in locals():
+                self.llm_client.enable_postprocessing = original_postprocessing
+            
+            if self.debug:
+                print(f"[DEBUG] LLM streaming failed: {e}")
+            # Fallback to dummy response with formatting
+            dummy_response = self._get_dummy_response(user_input)
+            formatted_response = self.formatter.format_response(dummy_response)
+            await self._stream_text(formatted_response)
+            return dummy_response
+    
+    async def _stream_text(self, text: str, delay: float = 0.03) -> None:
+        """Simulate streaming by printing text character by character"""
+        for char in text:
+            print(char, end='', flush=True)
+            await asyncio.sleep(delay)
     
     def _get_dummy_response(self, user_input: str) -> str:
         """Generate a dummy AI response as fallback"""
@@ -194,14 +322,12 @@ Simply type your message and press Enter to chat!
                 # Add user message to history
                 self.add_message("user", user_input)
                 
-                # Get AI response using LLM
-                ai_response = await self.get_ai_response(user_input)
+                # Stream AI response with proper formatting
+                ai_response = await self.stream_ai_response_formatted(user_input)
                 
                 # Add AI response to history
                 self.add_message("assistant", ai_response)
                 
-                # Display formatted AI response
-                print(self.formatter.format_response(ai_response))
                 print()  # Empty line for readability
                 
             except EOFError:

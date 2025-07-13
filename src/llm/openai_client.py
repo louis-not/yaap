@@ -11,6 +11,7 @@ from openai.types.chat import ChatCompletion
 from .base import BaseLLM, Message, LLMResponse, MessageRole
 from config.settings import LLMConfig
 from utils.helpers import postprocess_response, extract_thinking_content
+from utils.streaming import process_streaming_response
 
 
 class OpenAIClient(BaseLLM):
@@ -127,28 +128,25 @@ class OpenAIClient(BaseLLM):
                 **api_params
             )
             
-            if self.enable_postprocessing:
-                # Buffer the entire response for postprocessing
-                full_response = ""
-                async for chunk in stream:
-                    if chunk.choices:
-                        delta = chunk.choices[0].delta
-                        if delta.content:
-                            full_response += delta.content
-                
-                # Apply postprocessing to the full response
-                processed_response = postprocess_response(full_response, remove_thinking=True)
-                
-                # Yield the processed response as a single chunk
-                if processed_response:
-                    yield processed_response
-            else:
-                # Stream without postprocessing
+            # Create raw stream generator
+            async def raw_stream():
                 async for chunk in stream:
                     if chunk.choices:
                         delta = chunk.choices[0].delta
                         if delta.content:
                             yield delta.content
+            
+            # Apply postprocessing if enabled
+            if self.enable_postprocessing:
+                async for processed_chunk in process_streaming_response(
+                    raw_stream(), 
+                    remove_thinking=True,
+                    thinking_callback=None  # Will be overridden by the session layer
+                ):
+                    yield processed_chunk
+            else:
+                async for chunk in raw_stream():
+                    yield chunk
                         
         except Exception as e:
             raise RuntimeError(f"LLM streaming failed: {str(e)}") from e

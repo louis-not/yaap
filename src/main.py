@@ -52,8 +52,11 @@ Examples:
 async def handle_direct_query(query: str, debug: bool = False):
     """Handle a direct query and return response"""
     session = ChatSession(debug=debug)
-    response = await session.get_ai_response(query)
-    print(session.formatter.format_response(response))
+    
+    # Stream the response with proper formatting
+    response = await session.stream_ai_response_formatted(query)
+    
+    print()  # New line after streaming
 
 
 async def main_async():
