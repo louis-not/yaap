@@ -6,6 +6,7 @@ A simple and light AI Terminal application
 
 import sys
 import argparse
+import asyncio
 from pathlib import Path
 
 # Add src directory to path for imports
@@ -48,15 +49,15 @@ Examples:
     return parser.parse_args()
 
 
-def handle_direct_query(query: str, debug: bool = False):
+async def handle_direct_query(query: str, debug: bool = False):
     """Handle a direct query and return response"""
     session = ChatSession(debug=debug)
-    response = session.get_dummy_response(query)
+    response = await session.get_ai_response(query)
     print(session.formatter.format_response(response))
 
 
-def main():
-    """Main entry point"""
+async def main_async():
+    """Async main function"""
     args = parse_args()
     
     # Check if we have a direct query
@@ -64,7 +65,7 @@ def main():
         # Join all query arguments into a single string
         query = " ".join(args.query)
         try:
-            handle_direct_query(query, args.debug)
+            await handle_direct_query(query, args.debug)
         except Exception as e:
             if args.debug:
                 raise
@@ -83,7 +84,7 @@ def main():
     
     try:
         # Start interactive session
-        session.start()
+        await session.start()
     except KeyboardInterrupt:
         print("\n\nGoodbye! 👋")
         sys.exit(0)
@@ -92,6 +93,11 @@ def main():
             raise
         print(f"\nError: {e}")
         sys.exit(1)
+
+
+def main():
+    """Main entry point"""
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":
