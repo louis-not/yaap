@@ -3,8 +3,11 @@ Chat session management for YAAP
 """
 
 import time
+import asyncio
 from typing import List, Dict, Optional
 from .formatter import MessageFormatter
+from llm import OpenAIClient, Message, MessageRole
+from config import load_llm_config
 
 
 class ChatSession:
@@ -15,6 +18,19 @@ class ChatSession:
         self.conversation_history: List[Dict[str, str]] = []
         self.formatter = MessageFormatter()
         self.session_start_time = time.time()
+        
+        # Initialize LLM client
+        try:
+            config = load_llm_config()
+            self.llm_client = OpenAIClient(config)
+            self.use_llm = True
+            if self.debug:
+                print(f"[DEBUG] LLM initialized: {config.model} at {config.base_url}")
+        except Exception as e:
+            if self.debug:
+                print(f"[DEBUG] LLM initialization failed: {e}")
+            self.llm_client = None
+            self.use_llm = False
         
     def add_message(self, role: str, content: str, timestamp: Optional[float] = None):
         """Add a message to conversation history"""
@@ -32,8 +48,27 @@ class ChatSession:
         if self.debug:
             print(f"[DEBUG] Added {role} message: {content[:50]}...")
     
-    def get_dummy_response(self, user_input: str) -> str:
-        """Generate a dummy AI response"""
+    async def get_ai_response(self, user_input: str) -> str:
+        """Generate AI response using LLM or fallback to dummy response"""
+        if not self.use_llm or not self.llm_client:
+            return self._get_dummy_response(user_input)
+        
+        try:
+            # Convert conversation history to Message objects
+            messages = self._prepare_messages_for_llm(user_input)
+            
+            # Generate response using LLM
+            response = await self.llm_client.generate(messages)
+            return response.content
+            
+        except Exception as e:
+            if self.debug:
+                print(f"[DEBUG] LLM request failed: {e}")
+            # Fallback to dummy response
+            return self._get_dummy_response(user_input)
+    
+    def _get_dummy_response(self, user_input: str) -> str:
+        """Generate a dummy AI response as fallback"""
         responses = [
             "I'm an AI assistant, I'm ready to help! You said: '{}'".format(user_input),
             "That's interesting! I'm still learning, but I appreciate you sharing that.",
@@ -45,6 +80,27 @@ class ChatSession:
         # Simple response selection based on input length
         response_index = len(user_input) % len(responses)
         return responses[response_index]
+    
+    def _prepare_messages_for_llm(self, current_input: str) -> List[Message]:
+        """Convert conversation history to LLM Message format"""
+        messages = []
+        
+        # Add system message
+        system_prompt = (
+            "You are YAAP (Yet Another AI Program), a helpful AI assistant. "
+            "Be concise, friendly, and helpful in your responses."
+        )
+        messages.append(Message(MessageRole.SYSTEM, system_prompt))
+        
+        # Add conversation history
+        for msg in self.conversation_history:
+            role = MessageRole.USER if msg["role"] == "user" else MessageRole.ASSISTANT
+            messages.append(Message(role, msg["content"]))
+        
+        # Add current user input
+        messages.append(Message(MessageRole.USER, current_input))
+        
+        return messages
     
     def handle_command(self, command: str) -> bool:
         """Handle special commands. Returns True if command was handled."""
@@ -118,7 +174,7 @@ Simply type your message and press Enter to chat!
         print(f"Messages exchanged: {len(self.conversation_history)}")
         print("Thank you for using YAAP! 🤖")
     
-    def start(self):
+    async def start(self):
         """Start the interactive chat session"""
         print("Chat session started. Type your message below:\n")
         
@@ -138,8 +194,8 @@ Simply type your message and press Enter to chat!
                 # Add user message to history
                 self.add_message("user", user_input)
                 
-                # Get AI response (dummy for now)
-                ai_response = self.get_dummy_response(user_input)
+                # Get AI response using LLM
+                ai_response = await self.get_ai_response(user_input)
                 
                 # Add AI response to history
                 self.add_message("assistant", ai_response)
