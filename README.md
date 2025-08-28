@@ -1,6 +1,6 @@
 # YAAP
 
-yet another ai program. because we needed another one.
+yet another ai program. because we needed another one. The motivation for writing this code is to try and create a very simple chat terminal AI helper.
 
 ## what it does
 
